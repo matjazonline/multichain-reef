@@ -1,8 +1,23 @@
-import { useCallback, useMemo } from "react"
-import { useDispatch, useSelector } from 'react-redux'
-import { AppState, AppDispatch } from '../../state'
+import {useCallback, useMemo} from "react"
+import {useDispatch, useSelector} from 'react-redux'
+import {AppDispatch, AppState} from '../../state'
 import {tempAddress} from './actions'
-import { useActiveReact } from '../../hooks/useActiveReact'
+import {useActiveReact} from '../../hooks/useActiveReact'
+import {REEF_EXTENSION_IDENT} from "@reef-defi/extension-inject";
+import {web3Enable} from "@reef-defi/extension-dapp";
+import {ReefInjected} from "@reef-defi/extension-inject/types";
+import {resolveAddress, resolveEvmAddress} from "@reef-defi/evm-provider/utils";
+import {Contract} from "@ethersproject/contracts";
+import {ERC20_ABI} from "../../constants/abis/erc20";
+
+let reefExtension: ReefInjected;
+
+async function getReefBalance(address: string ): Promise<string> {
+  const provider = await reefExtension.reefProvider.getNetworkProvider();
+  const substrateAddr = await resolveAddress(provider, address);
+  const {data:balance} = await provider.api.query.system.account(substrateAddr);
+  return balance.free.toString();
+}
 
 export function isTempAddress (address:string):boolean | string {
   return address //true: address; false: false
@@ -21,8 +36,19 @@ export function useTempAddress () {
  */
 export function useLoginTemp () {
   const dispatch = useDispatch<AppDispatch>()
-  const loginTemp = useCallback(() => {
-    dispatch(tempAddress({address: ''}))
+  const loginTemp = useCallback(async () => {
+    const appName = 'Multichain Bridge App'
+    const extensionsArr = await web3Enable(appName);
+    reefExtension = extensionsArr.find(e=>e.name===REEF_EXTENSION_IDENT) as ReefInjected;
+
+    reefExtension.reefSigner.subscribeSelectedAccount(
+        (account) => {
+          if (!account) {
+            return;
+          }
+          dispatch(tempAddress({address: account?.address}));
+        }
+    );
   }, [])
   return {
     loginTemp
@@ -39,15 +65,21 @@ export function useTempBalance () {
   const getTempBalance = useCallback(({account}: {account:string|null|undefined}) => {
     return new Promise((resolve) => {
       if (account) {
-        resolve('')
+        resolve(await getReefBalance(account))
       }
     })
-  }, []) 
+  }, [])
 
   const getTempTokenBalance = useCallback(({account, token}: {account:string|null|undefined, token:string|null|undefined}) => {
     return new Promise((resolve) => {
       if (account && token) {
-        resolve('')
+        const provider = await reefExtension.reefProvider.getNetworkProvider();
+        const token = new Contract(token, ERC20_ABI, provider);
+        const evmAddr = await resolveEvmAddress(provider, account);
+        if(evmAddr) {
+          const balance = await token.balanceOf(evmAddr);
+          resolve(balance);
+        }
       }
     })
   }, [])
@@ -123,7 +155,7 @@ export function getTempTxnsStatus (txid:string) {
 }
 
 /**
- * Cross chain 
+ * Cross chain
  *
  * @param routerToken router token address
  * @param inputToken any or underlying address
@@ -164,7 +196,7 @@ enum SwapType {
 }
 
 /**
- * Cross chain 
+ * Cross chain
  *
  * @param routerToken router token address
  * @param selectCurrency select current token info
